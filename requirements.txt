@@ -1,0 +1,23 @@
+# --- Analyse et manipulation de données ---
+numpy
+pandas
+scipy
+
+# --- Visualisation ---
+matplotlib
+seaborn
+plotly
+IPython
+
+# --- Machine Learning ---
+scikit-learn
+xgboost
+lightgbm
+catboost
+imblearn
+
+# --- Outils pratiques ---
+tqdm
+python-dotenv
+jupyterlab
+
