@@ -58,11 +58,6 @@ def plot_mouse_data(df):
     plt.grid(True)
     plt.show()
 
-    # Matrice de corrélation
-    plt.figure(figsize=(4,3))
-    sns.heatmap(df.corr(), annot=True, cmap="Blues", cbar=False)
-    plt.title("Corrélation entre x1 et x2")
-    plt.show()
 
 
 # ----------------------------------------------------------
