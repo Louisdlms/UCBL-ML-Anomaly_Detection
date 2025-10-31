@@ -1,414 +1,358 @@
-# ==========================================================
-# utils.py
-# Fonctions utilitaires pour la partie 1 du TP Détection d'anomalies
-# ==========================================================
-
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 np.set_printoptions(threshold=10000, suppress = True)
+import pandas as pd
 import warnings
 import matplotlib.pyplot as plt
 warnings.filterwarnings('ignore')
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.ensemble import IsolationForest
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score, average_precision_score, roc_curve, precision_recall_curve, balanced_accuracy_score
+from imblearn.ensemble import EasyEnsembleClassifier
+from imblearn.under_sampling import TomekLinks
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline
+from xgboost import XGBClassifier
+from collections import Counter
+from sklearn.cluster import KMeans
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+##-------- Exercice 1 --------
 
-# ----------------------------------------------------------
-# Fonction 1 : Chargement du jeu de données
-# ----------------------------------------------------------
-def load_mouse_data(path):
-    """
-    Charge le fichier mouse.txt et renvoie un DataFrame.
-    """
-    data = pd.read_csv(path, sep=r"\s+", header=None, names=["x1", "x2"])
+def load_data(file_path):
+    """Charge les données depuis un fichier."""
+    if file_path=="data/mouse.txt":
+        data=pd.read_csv(file_path, sep=' ', header=None, names=['x1', 'x2'])
+        data['true_outlier']=[1 for k in range (490)]+[-1 for k in range (10)]
+    else : 
+        data=pd.read_csv(file_path)
     return data
 
-
-# ----------------------------------------------------------
-# Fonction 2 : Analyse statistique de base
-# ----------------------------------------------------------
-def describe_data(df):
-    """
-    Affiche les dimensions, les premières lignes,
-    les statistiques descriptives et la présence de valeurs manquantes.
-    """
-    print("Nombre d'observations :", df.shape[0])
-    print("Nombre de variables :", df.shape[1])
-    print("\nAperçu du jeu de données :")
-    print(df.head())
-
-    print("\nStatistiques descriptives :")
-    print(df.describe())
-
-    print("\nValeurs manquantes :")
-    print(df.isna().sum())
-
-
-# ----------------------------------------------------------
-# Fonction 3 : Visualisation des données
-# ----------------------------------------------------------
-def plot_mouse_data(df):
-    """
-    Affiche le nuage de points x1/x2 et la matrice de corrélation.
-    """
-    plt.figure(figsize=(6,6))
-    plt.scatter(df["x1"], df["x2"], s=20, color="steelblue")
-    plt.title("Visualisation du jeu de données Mouse")
-    plt.xlabel("x1")
-    plt.ylabel("x2")
-    plt.grid(True)
+def plot_data(data, title="Nuage de points"):
+    """Affiche un nuage de points des données."""
+    # Créer un graphique de dispersion
+    plt.scatter(data['x1'], data['x2'],c=-data['true_outlier'],cmap='coolwarm')
+    # Ajouter des étiquettes aux axes
+    plt.xlabel('Axe X1')
+    plt.ylabel('Axe X2')
+    # Donner un titre au graphique
+    plt.title(title)
+    # Afficher le graphique
     plt.show()
 
+def detect_outliers_isolation_forest(data, contamination=0.02, random_state=42):
+    """Détecte les outliers avec Isolation Forest."""
+    model = IsolationForest(contamination=contamination, random_state=random_state)
+    scores = model.fit_predict(data[['x1', 'x2']])  
+    data['iso_outlier'] = scores
+    return data, model.decision_function(data[['x1', 'x2']])
 
 
-# ----------------------------------------------------------
-# Fonction 4 : Visualisation des distributions individuelles
-# ----------------------------------------------------------
-def plot_distributions(df):
-    """
-    Affiche les histogrammes (avec courbe de densité) de chaque variable.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(10,4))
-    sns.histplot(df["x1"], bins=20, kde=True, ax=axes[0], color="skyblue")
-    axes[0].set_title("Distribution de x1")
+def detect_outliers_lof(data, n_neighbors=20, contamination=0.02):
+    """Détecte les outliers avec LOF."""
+    model = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination)
+    scores = model.fit_predict(data[['x1', 'x2']])
+    data['lof_outlier'] = scores
+    return data, model.negative_outlier_factor_
 
-    sns.histplot(df["x2"], bins=20, kde=True, ax=axes[1], color="lightcoral")
-    axes[1].set_title("Distribution de x2")
+def plot_outliers(data, method='iso'):
+    """Affiche les outliers détectés par une méthode donnée."""
+    if method == 'iso':
+        plt.scatter(data['x1'], data['x2'], c=-data['iso_outlier'],cmap='coolwarm')
+        plt.title("Outliers détectés par Isolation Forest")
+    elif method == 'lof':
+        plt.scatter(data['x1'], data['x2'], c=-data['lof_outlier'],cmap='coolwarm')
+        plt.title("Outliers détectés par LOF")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
+    plt.show()
+
+def plot_anomaly_scores(iso_scores, lof_scores):
+    """Affiche les histogrammes des scores d'anomalie."""
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.hist(iso_scores, bins=50, color='blue')
+    plt.title("Histogramme des scores d'anomalie (Isolation Forest)")
+    plt.xlabel("Score d'anomalie")
+    plt.ylabel("Fréquence")
+
+    plt.subplot(1, 2, 2)
+    plt.hist(lof_scores, bins=50, color='red')
+    plt.title("Histogramme des scores d'anomalie (LOF)")
+    plt.xlabel("Score d'anomalie")
+    plt.ylabel("Fréquence")
 
     plt.tight_layout()
     plt.show()
 
+def adjust_threshold_with_kmeans(data, scores):
+    """Ajuste le seuil avec K-Means."""
+    kmeans = KMeans(n_clusters=2, random_state=42)
+    clusters = kmeans.fit_predict(scores.reshape(-1, 1))
+    cluster_centers = kmeans.cluster_centers_
+    threshold = np.mean(cluster_centers)
+    outliers = scores < threshold
+    return outliers, threshold
 
-# ----------------------------------------------------------
-# Fonction 5 : Détection d'anomalies avec Isolation Forest
-# ----------------------------------------------------------
-from sklearn.ensemble import IsolationForest
-from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
-import numpy as np
-
-def run_isolation_forest(df, contamination=0.02, random_state=42, show_results=True):
-    """
-    Applique Isolation Forest sur les données pour détecter les outliers.
-    
-    Paramètres :
-    ------------
-    df : DataFrame
-        Données d'entrée (colonnes x1 et x2)
-    contamination : float
-        Proportion estimée d'anomalies (ici 10/500 = 0.02)
-    random_state : int
-        Graine aléatoire pour la reproductibilité
-    show_results : bool
-        Si True, affiche les résultats de la détection
-
-    Retour :
-    --------
-    preds : ndarray
-        Tableau de 0 (normal) et 1 (anomalie)
-    scores : ndarray
-        Score d'anomalie (plus grand = plus anormal)
-    """
-
-    # Création et entraînement du modèle
-    iso = IsolationForest(n_estimators=200, contamination=contamination, random_state=random_state)
-    iso.fit(df)
-
-    # Scores et prédictions
-    scores = -iso.decision_function(df)  # plus grand = plus anormal
-    threshold = np.percentile(scores, 100 * (1 - contamination))
-    preds = (scores > threshold).astype(int)
-
-    if show_results:
-        print(f"Seuil utilisé : {threshold}")
-        print(f"Nombre d'anomalies détectées : {preds.sum()} sur {len(preds)} observations")
-
-    return preds, scores
+def adjust_threshold_with_iqr(data, scores):
+    """Ajuste le seuil avec IQR."""
+    Q1 = np.percentile(scores, 25)
+    Q3 = np.percentile(scores, 75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    outliers = scores < lower_bound
+    return outliers, lower_bound
 
 
+def plot_unsupervised_results(data, iso_kmeans_outliers, iso_kmeans_threshold, iso_iqr_outliers, iso_iqr_threshold,
+                 lof_kmeans_outliers, lof_kmeans_threshold, lof_iqr_outliers, lof_iqr_threshold):
+    plt.figure(figsize=(12, 10))
 
-# ----------------------------------------------------------
-# Fonction 6 : Détection d'anomalies avec Local Outlier Factor
-# ----------------------------------------------------------
-from sklearn.neighbors import LocalOutlierFactor
+    plt.subplot(2, 2, 1)
+    plt.scatter(data['x1'], data['x2'], c=iso_kmeans_outliers, cmap='coolwarm')
+    plt.title(f"Isolation Forest + K-Means\nSeuil: {iso_kmeans_threshold:.2f}")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
 
-def run_lof(df, contamination=0.02, n_neighbors=20, show_results=True):
-    """
-    Applique le modèle Local Outlier Factor (LOF) pour détecter les outliers.
+    plt.subplot(2, 2, 2)
+    plt.scatter(data['x1'], data['x2'], c=iso_iqr_outliers, cmap='coolwarm')
+    plt.title(f"Isolation Forest + IQR\nSeuil: {iso_iqr_threshold:.2f}")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
 
-    Paramètres :
-    ------------
-    df : DataFrame
-        Données d'entrée (colonnes x1 et x2)
-    contamination : float
-        Proportion estimée d'anomalies (ex: 10/500 = 0.02)
-    n_neighbors : int
-        Nombre de voisins pour le calcul du facteur local
-    show_results : bool
-        Si True, affiche le nombre d'anomalies détectées
+    plt.subplot(2, 2, 3)
+    plt.scatter(data['x1'], data['x2'], c=lof_kmeans_outliers, cmap='coolwarm')
+    plt.title(f"LOF + K-Means\nSeuil: {lof_kmeans_threshold:.2f}")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
 
-    Retour :
-    --------
-    preds : ndarray
-        Tableau de 0 (normal) et 1 (anomalie)
-    scores : ndarray
-        Score d'anomalie (plus grand = plus anormal)
-    """
+    plt.subplot(2, 2, 4)
+    plt.scatter(data['x1'], data['x2'], c=lof_iqr_outliers, cmap='coolwarm')
+    plt.title(f"LOF + IQR\nSeuil: {lof_iqr_threshold:.2f}")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
 
-    lof = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination)
-    lof.fit_predict(df)
-    scores = -lof.negative_outlier_factor_          # inversion du score
+    plt.tight_layout()
+    plt.show()
 
-    threshold = np.percentile(scores, 100 * (1 - contamination))
-    preds = (scores > threshold).astype(int)
+def create_new_data(quantity=10):
+    np.random.seed(42)
+    new_data = pd.DataFrame({
+        'x1': np.random.uniform(low=-0, high=1, size=quantity),
+        'x2': np.random.uniform(low=0, high=1, size=quantity)
+    })
+    return(new_data)
 
-    if show_results:
-        print(f"Seuil utilisé : {threshold}")
-        print(f"Nombre d'anomalies détectées : {preds.sum()} sur {len(preds)} observations")
+def detect_novelty_lof(train_data, new_data, n_neighbors=20):
+    """Détecte les nouveautés avec LOF."""
+    model = LocalOutlierFactor(n_neighbors=n_neighbors, novelty=True)
+    model.fit(train_data[['x1', 'x2']])
+    novelty_scores = model.predict(new_data)
+    return novelty_scores
 
-    return preds, scores
-
-
-# ----------------------------------------------------------
-# Fonction 7 : Visualisation des anomalies détectées
-# ----------------------------------------------------------
-import matplotlib.pyplot as plt
-
-def plot_anomalies(df, preds, title="Anomalies détectées"):
-    """
-    Affiche les points normaux et anormaux dans un plan 2D.
-    
-    Paramètres :
-    ------------
-    df : DataFrame
-        Données (colonnes x1, x2)
-    preds : array-like
-        Tableau de 0 (normal) et 1 (anomalie)
-    title : str
-        Titre du graphique
-    """
-
-    plt.figure(figsize=(6,6))
-    plt.scatter(df["x1"], df["x2"], s=20, color="lightgray", label="Normaux")
-    plt.scatter(df.loc[preds==1, "x1"], df.loc[preds==1, "x2"],
-                s=70, color="red", marker="x", label="Anomalies")
-    plt.title(title)
+def plot_novelty_detection(data, new_data, novelty_scores):
+    plt.scatter(data['x1'], data['x2'], color='grey', label='Données originales', s=10)
+    plt.scatter(new_data['x1'], new_data['x2'], c=-novelty_scores, cmap='coolwarm', s=50, edgecolors='black', label='Nouveautés')
+    plt.title("Détection de nouveautés avec LOF")
     plt.xlabel("x1")
     plt.ylabel("x2")
     plt.legend()
-    plt.grid(True)
     plt.show()
 
 
 
-# ----------------------------------------------------------
-# Fonction 8 : Histogrammes des scores d'anomalie
-# ----------------------------------------------------------
-import seaborn as sns
+##-------- Exercice 2 --------
 
-def plot_anomaly_scores(scores_if, scores_lof):
-    """
-    Affiche les histogrammes des scores d'anomalie
-    pour Isolation Forest et LOF.
-    
-    Paramètres :
-    ------------
-    scores_if : array-like
-        Scores d'anomalie de l'Isolation Forest
-    scores_lof : array-like
-        Scores d'anomalie du Local Outlier Factor
-    """
+def preprocess_data(data):
+    """Prétraite les données en supprimant la colonne Time et en normalisant les features."""
+    if "Time" in data.columns : 
+        data = data.drop(columns=["Time"])
+        X = data.drop(columns=['Class'])
+        y = data['Class']
+    else : 
+        X = data.drop(columns=['label'])
+        X = pd.get_dummies(X, drop_first=True)
+        y = data['label'].apply(lambda x: 1 if x == 'normal' else 0)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    X_scaled = pd.DataFrame(X_scaled, columns=X.columns)
+    return X_scaled, y
 
-    import matplotlib.pyplot as plt
+def split_data(X, y, test_size=0.2, random_state=42):
+    """Sépare les données en ensembles d'entraînement et de test de manière stratifiée."""
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
+    return X_train, X_test, y_train, y_test
 
-    fig, axes = plt.subplots(1, 2, figsize=(12,4))
+def train_easy_ensemble(X_train, y_train):
+    """Entraîne un modèle EasyEnsemble."""
+    model = EasyEnsembleClassifier(random_state=42)
+    model.fit(X_train, y_train)
+    return model
 
-    # Histogramme Isolation Forest
-    sns.histplot(scores_if, bins=30, kde=True, ax=axes[0], color="skyblue")
-    axes[0].set_title("Scores d'anomalie - Isolation Forest")
-    axes[0].set_xlabel("Score (plus élevé = plus anormal)")
-    axes[0].set_ylabel("Fréquence")
+def train_isolation_forest(X_train, n_estimators=100, contamination='auto'):
+    """Entraîne un modèle Isolation Forest."""
+    model = IsolationForest(n_estimators=n_estimators, contamination=contamination, random_state=42)
+    model.fit(X_train)
+    return model
 
-    # Histogramme LOF
-    sns.histplot(scores_lof, bins=30, kde=True, ax=axes[1], color="orange")
-    axes[1].set_title("Scores d'anomalie - Local Outlier Factor")
-    axes[1].set_xlabel("Score (plus élevé = plus anormal)")
-    axes[1].set_ylabel("Fréquence")
+def train_lof(X_train, n_neighbors=20):
+    """Entraîne un modèle LOF."""
+    model = LocalOutlierFactor(n_neighbors=n_neighbors, novelty=True)
+    model.fit(X_train)
+    return model
+
+def train_xgboost(X_train, y_train):
+    """Entraîne un modèle XGBoost."""
+    model = XGBClassifier(scale_pos_weight=len(y_train[y_train == 0]) / len(y_train[y_train == 1]), random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+def train_random_forest(X_train, y_train):
+    """Entraîne un modèle Random Forest."""
+    model = RandomForestClassifier(class_weight='balanced', random_state=42)
+    model.fit(X_train, y_train)
+    return model
+
+def train_with_tomek_links(X_train, y_train):
+    """Entraîne un modèle avec Tomek Links pour l'undersampling."""
+    tl = TomekLinks()
+    X_res, y_res = tl.fit_resample(X_train, y_train)
+    model = XGBClassifier(random_state=42)
+    model.fit(X_res, y_res)
+    return model
+
+def train_with_smote(X_train, y_train):
+    """Entraîne un modèle avec SMOTE pour l'oversampling."""
+    smote = SMOTE(random_state=42)
+    X_res, y_res = smote.fit_resample(X_train, y_train)
+    model = XGBClassifier(random_state=42)
+    model.fit(X_res, y_res)
+    return model
+
+def evaluate_model(model, X_test, y_test):
+    """Évalue le modèle sur les données de test."""
+    if hasattr(model, 'predict_proba'):
+        y_scores = model.predict_proba(X_test)[:, 1]
+        y_pred = model.predict(X_test)
+    elif hasattr(model, 'decision_function'):
+        y_scores = -model.decision_function(X_test)
+        y_pred = model.predict(X_test)
+        y_pred = [1 if pred == -1 else 0 for pred in y_pred]
+    else:
+        y_scores = model.score_samples(X_test)
+        y_pred = model.predict(X_test)
+        y_pred = [1 if pred == -1 else 0 for pred in y_pred]
+
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred, average='binary')
+    roc_auc = roc_auc_score(y_test, y_scores)
+    avg_precision = average_precision_score(y_test, y_scores)
+    balanced_acc = balanced_accuracy_score(y_test, y_pred)
+
+    return conf_matrix, f1, roc_auc, avg_precision, balanced_acc, y_scores
+
+def plot_metrics(y_true, y_scores):
+    """Affiche les courbes ROC et Precision-Recall."""
+    fpr, tpr, thresholds_roc = roc_curve(y_true, y_scores)
+    precision, recall, thresholds_pr = precision_recall_curve(y_true, y_scores)
+    roc_auc = roc_auc_score(y_true, y_scores)
+    avg_precision = average_precision_score(y_true, y_scores)
+
+    plt.figure(figsize=(8, 3))
+    plt.subplot(1, 2, 1)
+    plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curve')
+    plt.legend()
+
+    plt.subplot(1, 2, 2)
+    plt.plot(recall, precision, label=f'Precision-Recall Curve (AP = {avg_precision:.2f})')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve')
+    plt.legend()
 
     plt.tight_layout()
     plt.show()
 
+def result_evaluation(models, X_train, X_test, y_train, y_test):
+    # Évaluer chaque modèle
+    results = {}
+    for name, model in models.items():
+        try:
+            conf_matrix, f1, roc_auc, avg_precision, balanced_acc, y_scores = evaluate_model(model, X_test, y_test)
+            results[name] = {
+                'Confusion Matrix': conf_matrix,
+                'F1-score': f1,
+                'ROC AUC': roc_auc,
+                'Average Precision': avg_precision,
+                'Balanced Accuracy': balanced_acc
+            }
+            print(f"{name} Results:")
+            print(f"Confusion Matrix:\n{conf_matrix}")
+            print(f"F1-score: {f1:.4f}")
+            print(f"ROC AUC: {roc_auc:.4f}")
+            print(f"Average Precision: {avg_precision:.4f}")
+            print(f"Balanced Accuracy: {balanced_acc:.4f}\n")
 
-# ----------------------------------------------------------
-# Fonction : Seuil IQR avec ajustement automatique
-# ----------------------------------------------------------
-import numpy as np
+            # Afficher les courbes ROC et Precision-Recall
+            plot_metrics(y_test, y_scores)
+        except Exception as e:
+            print(f"Error evaluating {name}: {e}")
 
-def threshold_iqr_auto(scores, target_rate=0.02, tol=0.005):
-    """
-    Méthode IQR améliorée :
-    ajuste automatiquement le coefficient pour obtenir un nombre
-    d'anomalies proche de target_rate (ex: 0.02 = 2%).
-    
-    Paramètres :
-    ------------
-    scores : array-like
-        Scores d'anomalie (plus grand = plus anormal)
-    target_rate : float
-        Proportion cible d'anomalies (~2%)
-    tol : float
-        Tolérance autour de target_rate
-    
-    Retour :
-    --------
-    threshold : float
-        Seuil final choisi
-    preds : ndarray
-        0 = normal, 1 = anomalie
-    coef : float
-        Coefficient final utilisé
-    """
+def cross_validate_model(model, X, y, cv=StratifiedKFold(n_splits=5)):
+    """Effectue une validation croisée stratifiée."""
+    f1_scores = []
+    roc_auc_scores = []
+    avg_precision_scores = []
+    balanced_acc_scores = []
 
-    q1, q3 = np.percentile(scores, [25, 75])
-    iqr = q3 - q1
+    for train_index, test_index in cv.split(X, y):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
 
-    coef = 1.5  # valeur initiale classique
-    n = len(scores)
-    preds = np.zeros(n)
-    nb_anomalies = 0
-
-    # Ajustement automatique du coefficient IQR
-    while True:
-        threshold = q3 + coef * iqr
-        preds = (scores > threshold).astype(int)
-        nb_anomalies = preds.sum()
-        rate = nb_anomalies / n
-
-        if abs(rate - target_rate) <= tol or coef < 0.1 or coef > 5:
-            break
-        elif rate < target_rate:
-            coef *= 0.9  # abaisse le seuil pour détecter plus
+        if hasattr(model, 'fit_resample'):
+            X_res, y_res = model.fit_resample(X_train, y_train)
+            model = XGBClassifier(random_state=42)
+            model.fit(X_res, y_res)
         else:
-            coef *= 1.1  # augmente le seuil pour détecter moins
+            if hasattr(model, 'fit_predict'):
+                model.fit(X_train)
+            else:
+                model.fit(X_train, y_train)
 
-    return threshold, preds, coef
+        _, f1, roc_auc, avg_precision, balanced_acc, _ = evaluate_model(model, X_test, y_test)
+        f1_scores.append(f1)
+        roc_auc_scores.append(roc_auc)
+        avg_precision_scores.append(avg_precision)
+        balanced_acc_scores.append(balanced_acc)
 
-
-# ----------------------------------------------------------
-# Fonction : Clustering (KMeans) avec ajustement automatique
-# ----------------------------------------------------------
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-
-def threshold_clustering_auto(scores, target_rate=0.02):
-    """
-    Méthode de clustering améliorée :
-    utilise KMeans sur les scores standardisés puis ajuste le seuil
-    pour obtenir un taux d’anomalies proche de target_rate.
-    """
-    X = np.array(scores).reshape(-1, 1)
-    X_scaled = StandardScaler().fit_transform(X)
-    
-    kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X_scaled)
-    
-    # Identifier le cluster le plus anormal (moyenne la plus élevée)
-    cluster_means = [scores[np.where(labels == i)].mean() for i in range(2)]
-    anomaly_cluster = np.argmax(cluster_means)
-
-    preds = (labels == anomaly_cluster).astype(int)
-    
-    # Ajustement automatique : si le taux est trop loin de la cible
-    rate = preds.sum() / len(preds)
-    if rate < target_rate * 0.5 or rate > target_rate * 1.5:
-        # Ajuste un seuil intermédiaire basé sur la moyenne des scores du cluster anormal
-        sorted_scores = np.sort(scores)
-        k = int(len(scores) * target_rate)
-        threshold = sorted_scores[-k] if k > 0 else sorted_scores[-1]
-        preds = (scores >= threshold).astype(int)
-    else:
-        threshold = np.mean(scores[labels == anomaly_cluster])
-
-    return threshold, preds, rate
+    return np.mean(f1_scores), np.mean(roc_auc_scores), np.mean(avg_precision_scores), np.mean(balanced_acc_scores)
 
 
-# ----------------------------------------------------------
-# Fonction 11 : Évaluation des résultats
-# ----------------------------------------------------------
-from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
-
-def evaluate_results(y_true, y_pred, name="Méthode"):
-    """
-    Calcule et affiche les métriques de performance pour une méthode donnée.
-    """
-    p = precision_score(y_true, y_pred, zero_division=0)
-    r = recall_score(y_true, y_pred, zero_division=0)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-    cm = confusion_matrix(y_true, y_pred)
-
-    print(f"=== {name} ===")
-    print(f"Précision : {p:.3f} | Rappel : {r:.3f} | F1-score : {f1:.3f}")
-    print("Matrice de confusion :")
-    print(cm)
-    print()
-
-    return {"precision": p, "recall": r, "f1": f1, "cm": cm}
-
-
-# ----------------------------------------------------------
-# Fonction 12 : Comparaison des méthodes
-# ----------------------------------------------------------
-import pandas as pd
-
-def compare_methods(results_dict):
-    """
-    Crée un tableau de comparaison à partir des métriques calculées.
-    results_dict : dict {nom_méthode: dict_métriques}
-    """
-    summary = pd.DataFrame.from_dict(results_dict, orient="index")
-    display(summary[["precision", "recall", "f1"]])
-
-
-# ----------------------------------------------------------
-# Fonction 13 : Détection de nouveautés avec LOF (novelty=True)
-# ----------------------------------------------------------
-from sklearn.neighbors import LocalOutlierFactor
-
-def run_lof_novelty(train_df, test_df, contamination=0.02, n_neighbors=20, show_results=True):
-    """
-    Entraîne un LOF en mode novelty detection sur des données normales,
-    puis prédit les anomalies sur un jeu de test.
-
-    Paramètres :
-    ------------
-    train_df : DataFrame
-        Jeu d'entraînement (données normales uniquement)
-    test_df : DataFrame
-        Jeu de test (peut contenir des anomalies)
-    contamination : float
-        Proportion estimée d'anomalies dans le test
-    n_neighbors : int
-        Nombre de voisins LOF
-    show_results : bool
-        Si True, affiche le nombre d'anomalies détectées
-
-    Retour :
-    --------
-    preds : ndarray
-        0 = normal, 1 = anomalie
-    scores : ndarray
-        Score d'anomalie (plus grand = plus anormal)
-    """
-
-    lof = LocalOutlierFactor(n_neighbors=n_neighbors, novelty=True)
-    lof.fit(train_df)
-
-    scores = -lof.decision_function(test_df)  # plus grand = plus anormal
-    threshold = np.percentile(scores, 100 * (1 - contamination))
-    preds = (scores > threshold).astype(int)
-
-    if show_results:
-        print(f"Seuil utilisé : {threshold:.4f}")
-        print(f"Nombre d'anomalies détectées : {preds.sum()} sur {len(preds)} observations")
-
-    return preds, scores
+def result_cross_val(models, X_scaled, y):
+    # Validation croisée pour chaque modèle
+    cv_results = {}
+    for name, model in models.items():
+        if name in ['IsolationForest', 'LOF']:
+            continue  # Ces modèles ne sont pas adaptés pour la validation croisée supervisée
+        try:
+            f1, roc_auc, avg_precision, balanced_acc = cross_validate_model(model, X_scaled, y)
+            cv_results[name] = {
+                'F1-score': f1,
+                'ROC AUC': roc_auc,
+                'Average Precision': avg_precision,
+                'Balanced Accuracy': balanced_acc
+            }
+            print(f"{name} Cross-Validation Results:")
+            print(f"F1-score: {f1:.4f}")
+            print(f"ROC AUC: {roc_auc:.4f}")
+            print(f"Average Precision: {avg_precision:.4f}")
+            print(f"Balanced Accuracy: {balanced_acc:.4f}\n")
+        except Exception as e:
+            print(f"Error in cross-validation for {name}: {e}")
 
 
