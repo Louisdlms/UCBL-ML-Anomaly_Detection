@@ -87,7 +87,7 @@ def plot_anomaly_scores(iso_scores, lof_scores):
     plt.tight_layout()
     plt.show()
 
-def adjust_threshold_with_kmeans(data, scores, k =2):
+def adjust_threshold_with_kmeans(data, scores, k=2):
     """Ajuste le seuil avec K-Means."""
     kmeans = KMeans(n_clusters=k, random_state=42)
     clusters = kmeans.fit_predict(scores.reshape(-1, 1))
@@ -167,12 +167,12 @@ def plot_novelty_detection(data, new_data, novelty_scores):
 
 def preprocess_data(data):
     """Prétraite les données en supprimant la colonne Time et en normalisant les features."""
-    if "Time" in data.columns : 
+    if "Time" in data.columns : # Pour CreditCard
         data = data.drop(columns=["Time"])
         X = data.drop(columns=['Class'])
         y = data['Class']
-    else : 
-        selected_classes = ['normal', 'buffer_overflow']
+    else : # Pour KDDCup99
+        selected_classes = ['normal', 'buffer_overflow'] # On choisit uniquement un des types d'outliers à détecter : ici 'buffer_overflow'
         data = data[data['label'].isin(selected_classes)]
         X = data.drop(columns=['label'])
         X = pd.get_dummies(X, drop_first=True)
