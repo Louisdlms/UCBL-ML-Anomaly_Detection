@@ -18,6 +18,8 @@ from collections import Counter
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import precision_recall_curve
+from sklearn.model_selection import GridSearchCV
 
 ##-------- Exercice 1 --------
 
@@ -233,25 +235,57 @@ def train_with_smote(X_train, y_train):
     model.fit(X_res, y_res)
     return model
 
-def evaluate_model(model, X_test, y_test):
-    """Évalue le modèle sur les données de test."""
+def optimize_hyperparameters(model, param_grid, X_train, y_train):
+    grid_search = GridSearchCV(model, param_grid, cv=5, scoring='f1', n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+    return grid_search.best_estimator_, grid_search.best_params_
+
+
+def find_optimal_threshold(y_true, y_scores):
+    precision, recall, thresholds = precision_recall_curve(y_true, y_scores)
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-9)
+    optimal_idx = np.argmax(f1_scores)
+    return thresholds[optimal_idx]
+
+
+def evaluate_model(model, X_test, y_test, optimize_threshold=False):
+    """
+    Évalue le modèle sur les données de test et ajuste le seuil si demandé.
+    """
+    # Calcul des scores et prédictions
     if hasattr(model, 'predict_proba'):
+        # Modèles supervisés : scores = probabilités de la classe positive
         y_scores = model.predict_proba(X_test)[:, 1]
         y_pred = model.predict(X_test)
+        optimal_threshold = 0.5  # Seuil par défaut pour les modèles supervisés
+
     elif hasattr(model, 'decision_function'):
+        # Modèles comme Isolation Forest : scores = -decision_function
         y_scores = -model.decision_function(X_test)
         y_pred = model.predict(X_test)
         y_pred = [1 if pred == -1 else 0 for pred in y_pred]
+        optimal_threshold = None
+
     else:
-        y_scores = model.negative_outlier_factor_(X_test)
+        # Modèles comme LOF : scores = -negative_outlier_factor_
+        y_scores = -model.negative_outlier_factor_
         y_pred = model.predict(X_test)
         y_pred = [1 if pred == -1 else 0 for pred in y_pred]
+        optimal_threshold = None
 
-    conf_matrix = confusion_matrix(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred, average='binary')
+    # Optimisation du seuil pour les modèles non supervisés
+    if optimize_threshold:
+        optimal_threshold = find_optimal_threshold(y_test, y_scores)
+        y_pred_adjusted = (y_scores >= optimal_threshold).astype(int)
+    else:
+        y_pred_adjusted = y_pred
+
+    # Calcul des métriques
+    conf_matrix = confusion_matrix(y_test, y_pred_adjusted)
+    f1 = f1_score(y_test, y_pred_adjusted, average='binary')
     roc_auc = roc_auc_score(y_test, y_scores)
     avg_precision = average_precision_score(y_test, y_scores)
-    balanced_acc = balanced_accuracy_score(y_test, y_pred)
+    balanced_acc = balanced_accuracy_score(y_test, y_pred_adjusted)
 
     return conf_matrix, f1, roc_auc, avg_precision, balanced_acc, y_scores
 
@@ -281,12 +315,12 @@ def plot_metrics(y_true, y_scores):
     plt.tight_layout()
     plt.show()
 
-def result_evaluation(models, X_train, X_test, y_train, y_test):
+def result_evaluation(models, X_test, y_test, optimize_threshold=False):
     # Évaluer chaque modèle
     results = {}
     for name, model in models.items():
         try:
-            conf_matrix, f1, roc_auc, avg_precision, balanced_acc, y_scores = evaluate_model(model, X_test, y_test)
+            conf_matrix, f1, roc_auc, avg_precision, balanced_acc, y_scores = evaluate_model(model, X_test, y_test, optimize_threshold=optimize_threshold)
             results[name] = {
                 'Confusion Matrix': conf_matrix,
                 'F1-score': f1,
@@ -295,18 +329,18 @@ def result_evaluation(models, X_train, X_test, y_train, y_test):
                 'Balanced Accuracy': balanced_acc
             }
             print(f"{name} Results:")
-            print(f"Confusion Matrix:\n{conf_matrix}")
+            print(f"Confusion Matrix:\n{conf_matrix}\n")
             print(f"F1-score: {f1:.4f}")
-            print(f"ROC AUC: {roc_auc:.4f}")
-            print(f"Average Precision: {avg_precision:.4f}")
-            print(f"Balanced Accuracy: {balanced_acc:.4f}\n")
+            print(f"ROC AUC: {roc_auc:.4f}\n")
+            print(f"Balanced Accuracy: {balanced_acc:.4f}")
+            print(f"Average Precision: {avg_precision:.4f}\n")
 
             # Afficher les courbes ROC et Precision-Recall
             plot_metrics(y_test, y_scores)
         except Exception as e:
             print(f"Error evaluating {name}: {e}")
 
-def cross_validate_model(model, X, y, cv=StratifiedKFold(n_splits=5)):
+def cross_validate_model(model, X, y, cv=StratifiedKFold(n_splits=5), optimize_threshold=False):
     """Effectue une validation croisée stratifiée."""
     f1_scores = []
     roc_auc_scores = []
@@ -327,7 +361,7 @@ def cross_validate_model(model, X, y, cv=StratifiedKFold(n_splits=5)):
             else:
                 model.fit(X_train, y_train)
 
-        _, f1, roc_auc, avg_precision, balanced_acc, _ = evaluate_model(model, X_test, y_test)
+        _, f1, roc_auc, avg_precision, balanced_acc, _ = evaluate_model(model, X_test, y_test, optimize_threshold=optimize_threshold)
         f1_scores.append(f1)
         roc_auc_scores.append(roc_auc)
         avg_precision_scores.append(avg_precision)
@@ -336,14 +370,14 @@ def cross_validate_model(model, X, y, cv=StratifiedKFold(n_splits=5)):
     return np.mean(f1_scores), np.mean(roc_auc_scores), np.mean(avg_precision_scores), np.mean(balanced_acc_scores)
 
 
-def result_cross_val(models, X_scaled, y):
+def result_cross_val(models, X_scaled, y, optimize_threshold=False):
     # Validation croisée pour chaque modèle
     cv_results = {}
     for name, model in models.items():
         if name in ['IsolationForest', 'LOF']:
             continue  # Ces modèles ne sont pas adaptés pour la validation croisée supervisée
         try:
-            f1, roc_auc, avg_precision, balanced_acc = cross_validate_model(model, X_scaled, y)
+            f1, roc_auc, avg_precision, balanced_acc = cross_validate_model(model, X_scaled, y, optimize_threshold=optimize_threshold)
             cv_results[name] = {
                 'F1-score': f1,
                 'ROC AUC': roc_auc,
@@ -357,5 +391,6 @@ def result_cross_val(models, X_scaled, y):
             print(f"Balanced Accuracy: {balanced_acc:.4f}\n")
         except Exception as e:
             print(f"Error in cross-validation for {name}: {e}")
+
 
 
