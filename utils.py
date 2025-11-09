@@ -165,7 +165,7 @@ def plot_novelty_detection(data, new_data, novelty_scores):
 
 
 
-##-------- Exercice 2 --------
+##-------- Exercice 2.1 et 2.2 --------
 
 def preprocess_data(data):
     """Prétraite les données en supprimant la colonne Time et en normalisant les features."""
@@ -235,7 +235,7 @@ def train_with_smote(X_train, y_train):
     model.fit(X_res, y_res)
     return model
 
-def optimize_hyperparameters(model, param_grid, X_train, y_train):
+def optimize_hyperparameters(model, param_grid, X_train, y_train    ):
     grid_search = GridSearchCV(model, param_grid, cv=5, scoring='f1', n_jobs=-1)
     grid_search.fit(X_train, y_train)
     return grid_search.best_estimator_, grid_search.best_params_
