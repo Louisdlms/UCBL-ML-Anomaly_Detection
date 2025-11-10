@@ -21,6 +21,8 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import precision_recall_curve
 from sklearn.model_selection import GridSearchCV
 
+randomstate=42
+
 ##-------- Exercice 1 --------
 
 def load_data(file_path):
@@ -44,7 +46,7 @@ def plot_data(data, title="Nuage de points"):
     # Afficher le graphique
     plt.show()
 
-def detect_outliers_isolation_forest(data, contamination=0.02, random_state=42):
+def detect_outliers_isolation_forest(data, contamination=0.02, random_state=randomstate):
     """Détecte les outliers avec Isolation Forest."""
     model = IsolationForest(contamination=contamination, random_state=random_state)
     scores = model.fit_predict(data[['x1', 'x2']])  
@@ -91,7 +93,7 @@ def plot_anomaly_scores(iso_scores, lof_scores):
 
 def adjust_threshold_with_kmeans(data, scores, k=2):
     """Ajuste le seuil avec K-Means."""
-    kmeans = KMeans(n_clusters=k, random_state=42)
+    kmeans = KMeans(n_clusters=k, random_state=randomstate)
     clusters = kmeans.fit_predict(scores.reshape(-1, 1))
     cluster_centers = kmeans.cluster_centers_
     threshold = np.mean(cluster_centers)
@@ -140,7 +142,7 @@ def plot_unsupervised_results(data, iso_kmeans_outliers, iso_kmeans_threshold, i
     plt.show()
 
 def create_new_data(quantity=10):
-    np.random.seed(42)
+    np.random.seed(randomstate)
     new_data = pd.DataFrame({
         'x1': np.random.uniform(low=-0, high=1, size=quantity),
         'x2': np.random.uniform(low=0, high=1, size=quantity)
@@ -184,20 +186,20 @@ def preprocess_data(data):
     X_scaled = pd.DataFrame(X_scaled, columns=X.columns)
     return X_scaled, y
 
-def split_data(X, y, test_size=0.2, random_state=42):
+def split_data(X, y, test_size=0.2, random_state=randomstate):
     """Sépare les données en ensembles d'entraînement et de test de manière stratifiée."""
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
     return X_train, X_test, y_train, y_test
 
 def train_easy_ensemble(X_train, y_train):
     """Entraîne un modèle EasyEnsemble."""
-    model = EasyEnsembleClassifier(random_state=42)
+    model = EasyEnsembleClassifier(random_state=randomstate)
     model.fit(X_train, y_train)
     return model
 
 def train_isolation_forest(X_train, n_estimators=100, contamination='auto'):
     """Entraîne un modèle Isolation Forest."""
-    model = IsolationForest(n_estimators=n_estimators, contamination=contamination, random_state=42)
+    model = IsolationForest(n_estimators=n_estimators, contamination=contamination, random_state=randomstate)
     model.fit(X_train)
     return model
 
@@ -209,13 +211,13 @@ def train_lof(X_train, n_neighbors=20, contamination='auto'):
 
 def train_xgboost(X_train, y_train):
     """Entraîne un modèle XGBoost."""
-    model = XGBClassifier(scale_pos_weight=len(y_train[y_train == 0]) / len(y_train[y_train == 1]), random_state=42)
+    model = XGBClassifier(scale_pos_weight=len(y_train[y_train == 0]) / len(y_train[y_train == 1]), random_state=randomstate)
     model.fit(X_train, y_train)
     return model
 
 def train_random_forest(X_train, y_train):
     """Entraîne un modèle Random Forest."""
-    model = RandomForestClassifier(class_weight='balanced', random_state=42)
+    model = RandomForestClassifier(class_weight='balanced', random_state=randomstate)
     model.fit(X_train, y_train)
     return model
 
@@ -223,15 +225,15 @@ def train_with_tomek_links(X_train, y_train):
     """Entraîne un modèle avec Tomek Links pour l'undersampling."""
     tl = TomekLinks()
     X_res, y_res = tl.fit_resample(X_train, y_train)
-    model = XGBClassifier(random_state=42)
+    model = XGBClassifier(random_state=randomstate)
     model.fit(X_res, y_res)
     return model
 
 def train_with_smote(X_train, y_train):
     """Entraîne un modèle avec SMOTE pour l'oversampling."""
-    smote = SMOTE(random_state=42)
+    smote = SMOTE(random_state=randomstate)
     X_res, y_res = smote.fit_resample(X_train, y_train)
-    model = XGBClassifier(random_state=42)
+    model = XGBClassifier(random_state=randomstate)
     model.fit(X_res, y_res)
     return model
 
@@ -353,7 +355,7 @@ def cross_validate_model(model, X, y, cv=StratifiedKFold(n_splits=5), optimize_t
 
         if hasattr(model, 'fit_resample'):
             X_res, y_res = model.fit_resample(X_train, y_train)
-            model = XGBClassifier(random_state=42)
+            model = XGBClassifier(random_state=randomstate)
             model.fit(X_res, y_res)
         else:
             if hasattr(model, 'fit_predict'):
